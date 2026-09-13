@@ -68,23 +68,13 @@ class Glim:
     # -----------------------------------------------------
 
     def print_user_message(self, text):
-        """Render submitted input as a stable visual message block.
-
-        The live ``›`` prompt belongs to prompt_toolkit.  It must not leak
-        into the transcript: that made submitted messages look inconsistent
-        and raw Rich markup in a user's message could also be interpreted.
-        """
+        """Render submitted input with a clear, non-intrusive prompt mark."""
         self.console.print()
 
-        self.console.print(Panel(
-            Text(text, style="white", overflow="fold"),
-            title="[bold #c7c7c7]You[/bold #c7c7c7]",
-            title_align="left",
-            border_style="#555555",
-            style="on #303030",
-            padding=(0, 1),
-            expand=True,
-        ))
+        message = Text()
+        message.append("> ", style="bold cyan")
+        message.append(text, style="white")
+        self.console.print(message, overflow="fold")
 
         self.console.print()
 
