@@ -31,9 +31,7 @@ class Glim:
             output.enable_bell = False
 
         self.input_style = Style.from_dict({
-            # The default prompt style paints the complete active input line,
-            # including its unused width, as a distinct input surface.
-            "": "bg:#303030 #ffffff",
+            "input-bar": "bg:#303030 #ffffff",
             "prompt": "bold cyan bg:#303030",
             "placeholder": "ansibrightblack bg:#303030",
         })
@@ -44,6 +42,14 @@ class Glim:
             style=self.input_style,
             erase_when_done=True,
         )
+
+        # PromptSession owns a real Window for the input buffer. Styling that
+        # window paints its full available width without applying a background
+        # to unrelated lines while the terminal redraws.
+        for window in self.session.app.layout.find_all_windows():
+            if getattr(window.content, "buffer", None) is self.session.default_buffer:
+                window.style = "class:input-bar"
+                break
 
     # -----------------------------------------------------
     # GENERAL
