@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "localai"
+version = "0.1.0"
+description = "A lightweight, local-first terminal coding assistant for LM Studio."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "LocalAI contributors"},
+]
+dependencies = [
+    "beautifulsoup4>=4.12",
+    "prompt-toolkit>=3.0",
+    "requests>=2.31",
+    "rich>=13.0",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+]
+
+[project.urls]
+Homepage = "https://github.com/OWNER/localai"
+Issues = "https://github.com/OWNER/localai/issues"
+
+[project.scripts]
+localai = "localai.cli:main"
+
+[tool.setuptools]
+packages = ["localai"]
+package-dir = {localai = "."}
+
