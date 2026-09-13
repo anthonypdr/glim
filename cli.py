@@ -2,8 +2,10 @@ import os
 import subprocess
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.output.defaults import create_output
+from prompt_toolkit.styles import Style
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -28,9 +30,15 @@ class Glim:
         if hasattr(output, "enable_bell"):
             output.enable_bell = False
 
+        self.input_style = Style.from_dict({
+            "prompt": "bold cyan",
+            "placeholder": "ansibrightblack",
+        })
+
         self.session = PromptSession(
             history=InMemoryHistory(),
             output=output,
+            style=self.input_style,
             erase_when_done=True,
         )
 
@@ -819,7 +827,15 @@ When the task finishes, Glim returns to lightweight chat.
             try:
                 text = (
                     self.session.prompt(
-                        "› "
+                        FormattedText([
+                            ("class:prompt", "> "),
+                        ]),
+                        placeholder=FormattedText([
+                            (
+                                "class:placeholder",
+                                "Ask anything…  @ for project tools  /help for commands",
+                            ),
+                        ]),
                     )
                     .strip()
                 )
