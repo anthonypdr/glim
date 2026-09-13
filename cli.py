@@ -31,8 +31,11 @@ class Glim:
             output.enable_bell = False
 
         self.input_style = Style.from_dict({
-            "prompt": "bold cyan",
-            "placeholder": "ansibrightblack",
+            # The default prompt style paints the complete active input line,
+            # including its unused width, as a distinct input surface.
+            "": "bg:#303030 #ffffff",
+            "prompt": "bold cyan bg:#303030",
+            "placeholder": "ansibrightblack bg:#303030",
         })
 
         self.session = PromptSession(
