@@ -1,14 +1,17 @@
 # Glim
 
-Glim is a lightweight, local-first terminal coding assistant for [LM Studio](https://lmstudio.ai/). It is designed for people who want an agent that works in their project without a large, always-on instruction prompt slowing down a local model.
+Glim is a lightweight terminal client for the models you already run locally. It starts with [LM Studio](https://lmstudio.ai/) and can connect to any local server with OpenAI-compatible model and chat endpoints.
 
-It is its own terminal experience: compact chat for everyday questions, with project and web tools enabled only when you explicitly ask for agent work.
+It provides a compact terminal experience without a large, always-on system prompt. Optional project tools are only attached when you explicitly ask for them.
 
 > Glim is early-stage software. Review agent-proposed changes and approve commands deliberately.
 
 ## Features
 
-- Connects to the LM Studio local server (default: `http://127.0.0.1:1234`)
+- Connects to LM Studio by default (`http://127.0.0.1:1234`)
+- Shows the models currently running in LM Studio with `/model`
+- Gives in-terminal connection steps when no model server or model is found
+- Connects to other local OpenAI-compatible model servers with one environment variable
 - Streams normal chat responses in a focused terminal interface
 - Enables agent tools only for requests prefixed with `@`
 - Lets the agent inspect and edit files inside the current project
@@ -36,7 +39,7 @@ python -m pip install -e .
 ## Quick start
 
 1. Open LM Studio and load a chat-capable model.
-2. Start LM Studio's local server on port `1234`.
+2. Open LM Studio's **Developer** tab and turn on **Start server**. You can also run `lms server start`.
 3. Change into the project you want help with.
 4. Run:
 
@@ -44,13 +47,15 @@ python -m pip install -e .
 glim
 ```
 
-Glim displays the loaded model and working directory at startup. It reads and writes only within the directory from which you launch it.
+Type `/model` to display the models currently running in LM Studio and select one. If nothing is displayed, Glim explains how to load a model and start the local server directly in the terminal.
 
-To connect to a server at a different address, set `GLIM_LMSTUDIO_URL` before launching:
+To connect to a different local server that provides OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints, set its base URL before launching:
 
 ```bash
-GLIM_LMSTUDIO_URL=http://192.168.1.10:1234 glim
+GLIM_SERVER_URL=http://127.0.0.1:PORT/v1 GLIM_SERVER_NAME="My local server" glim
 ```
+
+`GLIM_LMSTUDIO_URL` remains supported for an LM Studio URL override.
 
 ## Using Glim
 
@@ -83,7 +88,7 @@ Safe read-only commands run immediately. Commands that can alter the system or p
 | Command | What it does |
 | --- | --- |
 | `/help` | Show in-app help |
-| `/model` | List loaded models and choose one |
+| `/model` | Display running LM Studio models, or selectable models from another compatible local server |
 | `/status` | Show connection, model, directory, and context status |
 | `/tools` | Show the tools available through `@` agent mode |
 | `/clear` | Clear normal-chat history |
@@ -91,7 +96,7 @@ Safe read-only commands run immediately. Commands that can alter the system or p
 
 ## How it stays lightweight
 
-Normal chat sends only your conversation to LM Studio. The coding-agent instructions and tool definitions are attached only for requests beginning with `@`; they are not permanently included in every chat request. That keeps the common path small while retaining project automation when you need it.
+Normal chat sends only your conversation to the local model server. The optional tool instructions and definitions are attached only for requests beginning with `@`; they are not permanently included in every request. That keeps the common path small while retaining project automation when you need it.
 
 ## Development
 

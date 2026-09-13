@@ -5,31 +5,71 @@ import requests
 
 class LMStudio:
     def __init__(self, base_url=None):
-        # This keeps the default compatible with LM Studio while making a
-        # remote/containerized server an explicit user choice.
-        base_url = base_url or os.environ.get(
-            "GLIM_LMSTUDIO_URL",
-            "http://127.0.0.1:1234",
+        # LM Studio is the zero-configuration default. Any server that
+        # implements OpenAI's /v1/models and /v1/chat/completions endpoints
+        # can be selected explicitly without introducing a provider framework.
+        base_url = (
+            base_url
+            or os.environ.get("GLIM_SERVER_URL")
+            or os.environ.get("GLIM_LMSTUDIO_URL")
+            or "http://127.0.0.1:1234"
         )
         self.base_url = base_url.rstrip("/")
+        self.server_name = os.environ.get(
+            "GLIM_SERVER_NAME",
+            "LM Studio",
+        )
+        self.has_loaded_state = False
 
     @property
     def models_url(self):
         return f"{self.base_url}/api/v1/models"
 
     @property
+    def compatible_models_url(self):
+        return f"{self.base_url}/v1/models"
+
+    @property
     def chat_url(self):
         return f"{self.base_url}/v1/chat/completions"
 
     def get_models(self):
-        response = requests.get(
-            self.models_url,
-            timeout=5,
-        )
+        """Return models from LM Studio or an OpenAI-compatible local server.
 
-        response.raise_for_status()
+        LM Studio's native endpoint exposes whether an installed LLM is
+        loaded, so Glim can show exactly what is running. Other compatible
+        servers expose only the models they make available; those are still
+        usable selections but are labelled accordingly in the terminal.
+        """
+        try:
+            response = requests.get(
+                self.models_url,
+                timeout=5,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException as native_error:
+            try:
+                response = requests.get(
+                    self.compatible_models_url,
+                    timeout=5,
+                )
+                response.raise_for_status()
+                data = response.json()
+            except requests.RequestException as compatible_error:
+                raise ConnectionError(
+                    f"Could not reach {self.server_name} at "
+                    f"{self.base_url}."
+                ) from compatible_error
 
-        data = response.json()
+            self.has_loaded_state = False
+            return self._compatible_models(data)
+
+        self.has_loaded_state = True
+        return self._lmstudio_models(data)
+
+    @staticmethod
+    def _lmstudio_models(data):
 
         models = []
 
@@ -58,6 +98,32 @@ class LMStudio:
                     "architecture": item.get(
                         "architecture"
                     ),
+                }
+            )
+
+        return models
+
+    @staticmethod
+    def _compatible_models(data):
+        models = []
+
+        for item in data.get("data", []):
+            if isinstance(item, str):
+                item = {"id": item}
+
+            model_id = item.get("id")
+            if not model_id:
+                continue
+
+            models.append(
+                {
+                    "id": model_id,
+                    "name": item.get("name") or model_id,
+                    # Compatible servers generally do not expose a separate
+                    # loaded-state field. Their advertised models are usable.
+                    "loaded": True,
+                    "params": None,
+                    "architecture": None,
                 }
             )
 

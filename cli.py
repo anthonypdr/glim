@@ -130,7 +130,7 @@ class Glim:
 
         else:
             self.console.print(
-                "[red]LM Studio disconnected or no model loaded[/red]"
+                f"[red]{self.lm.server_name} disconnected or no model available[/red]"
             )
 
             self.console.print(
@@ -140,8 +140,8 @@ class Glim:
         self.console.print()
 
         self.console.print(
-            "[dim]Type /help for commands. "
-            "Use @ for agent mode.[/dim]"
+            "[dim]Type /model to find a local model. "
+            "Type /help for commands.[/dim]"
         )
 
         self.console.print()
@@ -263,7 +263,7 @@ When the task finishes, Glim returns to lightweight chat.
         status = Text()
 
         status.append(
-            "LM Studio: "
+            f"{self.lm.server_name}: "
         )
 
         if self.model:
@@ -417,29 +417,57 @@ When the task finishes, Glim returns to lightweight chat.
     # MODELS
     # -----------------------------------------------------
 
+    def show_model_setup(self, error=None):
+        lines = [
+            f"[bold]No model is available from {self.lm.server_name}.[/bold]",
+            "",
+            "[bold]LM Studio setup[/bold]",
+            "1. Open LM Studio and load a chat model.",
+            "2. Open the Developer tab and turn on [cyan]Start server[/cyan].",
+            "   Or run [cyan]lms server start[/cyan] in a terminal.",
+            "3. Return here and type [cyan]/model[/cyan] again.",
+            "",
+            "[bold]Another local server[/bold]",
+            "Point Glim at an OpenAI-compatible server:",
+            "[cyan]GLIM_SERVER_URL=http://HOST:PORT/v1 glim[/cyan]",
+            "Optionally label it with [cyan]GLIM_SERVER_NAME[/cyan].",
+        ]
+
+        if error:
+            lines.extend([
+                "",
+                f"[dim]{error}[/dim]",
+            ])
+
+        self.console.print()
+        self.console.print(Panel(
+            "\n".join(lines),
+            title="Model connection",
+            border_style="yellow",
+        ))
+        self.console.print()
+
     def show_models(self):
         try:
             models = self.lm.get_loaded_models()
 
         except Exception as error:
-            self.console.print(
-                f"\n[red]Could not reach "
-                f"LM Studio:[/red] {error}\n"
-            )
+            self.show_model_setup(error)
             return
 
         if not models:
-            self.console.print(
-                "\n[yellow]No loaded LLMs "
-                "found in LM Studio.[/yellow]\n"
-            )
+            self.show_model_setup()
             return
 
         self.models = models
 
         self.console.print()
         self.console.print(
-            "[bold]Loaded models[/bold]"
+            (
+                "[bold]Running models[/bold]"
+                if self.lm.has_loaded_state
+                else "[bold]Available models[/bold]"
+            )
         )
         self.console.print()
 
