@@ -1,8 +1,7 @@
-"""Run LocalAI with ``python -m localai``."""
+"""Run Glim with ``python -m glim``."""
 
-from localai.cli import main
+from glim.cli import main
 
 
 if __name__ == "__main__":
     main()
-

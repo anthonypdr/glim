@@ -1,10 +1,10 @@
-# LocalAI
+# Glim
 
-LocalAI is a lightweight, local-first terminal coding assistant for [LM Studio](https://lmstudio.ai/). It is designed for people who want an agent that works in their project without a large, always-on instruction prompt slowing down a local model.
+Glim is a lightweight, local-first terminal coding assistant for [LM Studio](https://lmstudio.ai/). It is designed for people who want an agent that works in their project without a large, always-on instruction prompt slowing down a local model.
 
 It is its own terminal experience: compact chat for everyday questions, with project and web tools enabled only when you explicitly ask for agent work.
 
-> LocalAI is early-stage software. Review agent-proposed changes and approve commands deliberately.
+> Glim is early-stage software. Review agent-proposed changes and approve commands deliberately.
 
 ## Features
 
@@ -20,14 +20,14 @@ It is its own terminal experience: compact chat for everyday questions, with pro
 ### From a Git checkout
 
 ```bash
-git clone https://github.com/anthonypdr/LocalAI.git
-cd LocalAI
+git clone https://github.com/anthonypdr/glim.git
+cd glim
 python -m pip install .
 ```
 
 ### Development install
 
-Use this while working on LocalAI itself:
+Use this while working on Glim itself:
 
 ```bash
 python -m pip install -e .
@@ -41,18 +41,18 @@ python -m pip install -e .
 4. Run:
 
 ```bash
-localai
+glim
 ```
 
-LocalAI displays the loaded model and working directory at startup. It reads and writes only within the directory from which you launch it.
+Glim displays the loaded model and working directory at startup. It reads and writes only within the directory from which you launch it.
 
-To connect to a server at a different address, set `LOCALAI_LMSTUDIO_URL` before launching:
+To connect to a server at a different address, set `GLIM_LMSTUDIO_URL` before launching:
 
 ```bash
-LOCALAI_LMSTUDIO_URL=http://192.168.1.10:1234 localai
+GLIM_LMSTUDIO_URL=http://192.168.1.10:1234 glim
 ```
 
-## Using LocalAI
+## Using Glim
 
 Type a normal message for lightweight chat:
 
@@ -87,7 +87,7 @@ Safe read-only commands run immediately. Commands that can alter the system or p
 | `/status` | Show connection, model, directory, and context status |
 | `/tools` | Show the tools available through `@` agent mode |
 | `/clear` | Clear normal-chat history |
-| `/exit` | Quit LocalAI |
+| `/exit` | Quit Glim |
 
 ## How it stays lightweight
 
@@ -101,7 +101,7 @@ Run a syntax check from the repository root:
 python -m py_compile *.py
 ```
 
-The package's command-line entry point is `localai.cli:main`. Launching `python -m localai` runs the same terminal application.
+The package's command-line entry point is `glim.cli:main`. Launching `python -m glim` runs the same terminal application.
 
 ## License
 

@@ -1,6 +1,6 @@
 import json
 
-from localai.tools import (
+from glim.tools import (
     list_files,
     read_file,
     write_file,
@@ -8,7 +8,7 @@ from localai.tools import (
     execute_command,
 )
 
-from localai.web_tools import (
+from glim.web_tools import (
     fetch_url,
     web_search,
 )

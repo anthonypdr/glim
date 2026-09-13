@@ -1,5 +1,5 @@
 def main():
-    from localai.app import main as run_app
+    from glim.app import main as run_app
     run_app()
 
 

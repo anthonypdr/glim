@@ -10,11 +10,11 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
-from localai.agent import Agent
-from localai.lmstudio import LMStudio
+from glim.agent import Agent
+from glim.lmstudio import LMStudio
 
 
-class LocalAI:
+class Glim:
     def __init__(self):
         self.console = Console()
         self.lm = LMStudio()
@@ -94,14 +94,14 @@ class LocalAI:
 
     def notify_done(
         self,
-        title="LocalAI",
+        title="Glim",
         message="Response complete",
     ):
         try:
             subprocess.Popen(
                 [
                     "notify-send",
-                    "--app-name=LocalAI",
+                    "--app-name=Glim",
                     title,
                     message,
                 ],
@@ -120,7 +120,7 @@ class LocalAI:
         self.console.print()
 
         self.console.print(
-            "[bold]LocalAI[/bold]"
+            "[bold]Glim[/bold]"
         )
 
         if self.model:
@@ -152,7 +152,7 @@ class LocalAI:
 
     def show_help(self):
         help_text = """
-# LocalAI Help
+# Glim Help
 
 ## Chat
 
@@ -224,11 +224,11 @@ Clear normal chat history.
 
 `/exit`
 
-Quit LocalAI.
+Quit Glim.
 
 ## Notifications
 
-LocalAI sends a desktop notification only after an AI response
+Glim sends a desktop notification only after an AI response
 or agent task has completely finished.
 
 Typing does not trigger notifications.
@@ -248,7 +248,7 @@ Your conversation goes directly to LM Studio without agent tools.
 
 A small agent prompt and tool definitions are temporarily attached.
 
-When the task finishes, LocalAI returns to lightweight chat.
+When the task finishes, Glim returns to lightweight chat.
 """
 
         self.console.print(
@@ -661,7 +661,7 @@ When the task finishes, LocalAI returns to lightweight chat.
             )
 
             self.notify_done(
-                "LocalAI",
+                "Glim",
                 "Response complete",
             )
 
@@ -729,7 +729,7 @@ When the task finishes, LocalAI returns to lightweight chat.
             self.console.print()
 
             self.notify_done(
-                "LocalAI Agent",
+                "Glim Agent",
                 "Task complete",
             )
 
@@ -844,4 +844,4 @@ When the task finishes, LocalAI returns to lightweight chat.
 
 
 def main():
-    LocalAI().run()
+    Glim().run()

@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "localai"
+name = "glim"
 version = "0.1.0"
 description = "A lightweight, local-first terminal coding assistant for LM Studio."
 readme = "README.md"
@@ -29,12 +29,12 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/anthonypdr/LocalAI"
-Issues = "https://github.com/anthonypdr/LocalAI/issues"
+Homepage = "https://github.com/anthonypdr/glim"
+Issues = "https://github.com/anthonypdr/glim/issues"
 
 [project.scripts]
-localai = "localai.cli:main"
+glim = "glim.cli:main"
 
 [tool.setuptools]
-packages = ["localai"]
-package-dir = {localai = "."}
+packages = ["glim"]
+package-dir = {glim = "."}

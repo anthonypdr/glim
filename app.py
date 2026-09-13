@@ -16,7 +16,7 @@ from textual.widgets import (
     Static,
 )
 
-from localai.lmstudio import LMStudio
+from glim.lmstudio import LMStudio
 
 
 class ChatMessage(Vertical):
@@ -99,8 +99,8 @@ class ChatMessage(Vertical):
         markdown.update(content)
 
 
-class LocalAIApp(App):
-    TITLE = "LocalAI"
+class GlimApp(App):
+    TITLE = "Glim"
 
     CSS = """
     Screen {
@@ -235,7 +235,7 @@ class LocalAIApp(App):
     def compose(self) -> ComposeResult:
         with Horizontal(id="topbar"):
             yield Static(
-                "LocalAI",
+                "Glim",
                 id="brand",
             )
 
@@ -821,4 +821,4 @@ class LocalAIApp(App):
 
 
 def main():
-    LocalAIApp().run()
+    GlimApp().run()

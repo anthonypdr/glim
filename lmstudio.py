@@ -8,7 +8,7 @@ class LMStudio:
         # This keeps the default compatible with LM Studio while making a
         # remote/containerized server an explicit user choice.
         base_url = base_url or os.environ.get(
-            "LOCALAI_LMSTUDIO_URL",
+            "GLIM_LMSTUDIO_URL",
             "http://127.0.0.1:1234",
         )
         self.base_url = base_url.rstrip("/")
