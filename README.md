@@ -20,12 +20,10 @@ It is its own terminal experience: compact chat for everyday questions, with pro
 ### From a Git checkout
 
 ```bash
-git clone https://github.com/OWNER/localai.git
-cd localai
+git clone https://github.com/anthonypdr/LocalAI.git
+cd LocalAI
 python -m pip install .
 ```
-
-Replace `OWNER` with the GitHub account or organization hosting the project.
 
 ### Development install
 
@@ -108,4 +106,3 @@ The package's command-line entry point is `localai.cli:main`. Launching `python 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-

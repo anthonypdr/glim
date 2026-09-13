@@ -29,8 +29,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/OWNER/localai"
-Issues = "https://github.com/OWNER/localai/issues"
+Homepage = "https://github.com/anthonypdr/LocalAI"
+Issues = "https://github.com/anthonypdr/LocalAI/issues"
 
 [project.scripts]
 localai = "localai.cli:main"
@@ -38,4 +38,3 @@ localai = "localai.cli:main"
 [tool.setuptools]
 packages = ["localai"]
 package-dir = {localai = "."}
-
