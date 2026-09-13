@@ -9,6 +9,7 @@ from prompt_toolkit.styles import Style
 
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.padding import Padding
 from rich.panel import Panel
 from rich.text import Text
 
@@ -91,11 +92,10 @@ class Glim:
         message = Text()
         message.append("> ", style="bold cyan")
         message.append(text, style="white")
-        self.console.print(Panel(
+        self.console.print(Padding(
             message,
-            border_style="#555555",
+            (0, 1),
             style="on #303030",
-            padding=(0, 1),
             expand=True,
         ))
 
@@ -843,7 +843,7 @@ When the task finishes, Glim returns to lightweight chat.
                 text = (
                     self.session.prompt(
                         FormattedText([
-                            ("class:prompt", "> "),
+                            ("class:prompt", "  > "),
                         ]),
                         placeholder=FormattedText([
                             (
