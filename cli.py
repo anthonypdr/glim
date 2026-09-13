@@ -82,14 +82,12 @@ class Glim:
         message = Text()
         message.append("> ", style="bold cyan")
         message.append(text, style="white")
-        # Do not expand the background across the full terminal width. Rich
-        # output is already printed text, so a full-width panel would retain
-        # its old width if the user resizes their terminal later.
-        self.console.print(Panel.fit(
+        self.console.print(Panel(
             message,
             border_style="#555555",
             style="on #303030",
             padding=(0, 1),
+            expand=True,
         ))
 
         self.console.print()
