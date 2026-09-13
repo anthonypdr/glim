@@ -76,13 +76,19 @@ class Glim:
     # -----------------------------------------------------
 
     def print_user_message(self, text):
-        """Render submitted input with a clear, non-intrusive prompt mark."""
+        """Render submitted input in its distinct message surface."""
         self.console.print()
 
         message = Text()
         message.append("> ", style="bold cyan")
         message.append(text, style="white")
-        self.console.print(message, overflow="fold")
+        self.console.print(Panel(
+            message,
+            border_style="#555555",
+            style="on #303030",
+            padding=(0, 1),
+            expand=True,
+        ))
 
         self.console.print()
 
