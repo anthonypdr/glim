@@ -741,9 +741,16 @@ When the task finishes, Glim returns to lightweight chat.
         )
 
         try:
-            result = agent.run(
-                task
-            )
+            # A local model can take a noticeable moment before its first
+            # token or tool call. Keep a visible live indicator on screen so
+            # the terminal never looks stalled during that wait.
+            with self.console.status(
+                f"[bold cyan]{self.model} is working…[/bold cyan]",
+                spinner="dots",
+            ):
+                result = agent.run(
+                    task
+                )
 
             self.console.print()
 
