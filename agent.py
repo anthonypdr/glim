@@ -1,5 +1,8 @@
 import json
 
+from rich.markdown import Markdown
+from rich.text import Text
+
 from glim.tools import (
     list_files,
     read_file,
@@ -210,12 +213,18 @@ class Agent:
         ]
 
         for _ in range(max_steps):
-            response = self.lmstudio.chat(
-                self.model,
-                messages,
-                tools=TOOLS,
-                tool_choice="auto",
-            )
+            # Stop live rendering before printing durable output or asking
+            # for approval through prompt_toolkit, which also owns the cursor.
+            with self.console.status(
+                f"[bold cyan]{self.model} is working…[/bold cyan]",
+                spinner="dots",
+            ):
+                response = self.lmstudio.chat(
+                    self.model,
+                    messages,
+                    tools=TOOLS,
+                    tool_choice="auto",
+                )
 
             message = (
                 response
@@ -227,6 +236,9 @@ class Agent:
 
             if not tool_calls:
                 return message.get("content") or "(No response)"
+
+            if message.get("content"):
+                self.console.print(Markdown(message["content"]))
 
             messages.append(message)
 

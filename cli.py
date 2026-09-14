@@ -3,7 +3,9 @@ import subprocess
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.filters import to_filter
 from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.output.defaults import create_output
 from prompt_toolkit.styles import Style
 
@@ -42,6 +44,7 @@ class Glim:
             output=output,
             style=self.input_style,
             erase_when_done=True,
+            reserve_space_for_menu=0,
         )
 
         # PromptSession owns a real Window for the input buffer. Styling that
@@ -50,7 +53,18 @@ class Glim:
         for window in self.session.app.layout.find_all_windows():
             if getattr(window.content, "buffer", None) is self.session.default_buffer:
                 window.style = "class:input-bar"
+                window.dont_extend_height = to_filter(True)
                 break
+
+        # Keep padding inside the prompt surface, with no background applied
+        # to unused terminal rows. Wrapped input still grows with its content.
+        self.session.app.layout.container = HSplit(
+            [
+                Window(height=1, style="class:input-bar"),
+                self.session.app.layout.container,
+                Window(height=1, style="class:input-bar"),
+            ],
+        )
 
     # -----------------------------------------------------
     # GENERAL
@@ -94,7 +108,7 @@ class Glim:
         message.append(text, style="white")
         self.console.print(Padding(
             message,
-            (0, 1),
+            (1, 2),
             style="on #303030",
             expand=True,
         ))
@@ -754,16 +768,7 @@ When the task finishes, Glim returns to lightweight chat.
         )
 
         try:
-            # A local model can take a noticeable moment before its first
-            # token or tool call. Keep a visible live indicator on screen so
-            # the terminal never looks stalled during that wait.
-            with self.console.status(
-                f"[bold cyan]{self.model} is working…[/bold cyan]",
-                spinner="dots",
-            ):
-                result = agent.run(
-                    task
-                )
+            result = agent.run(task)
 
             self.console.print()
 
