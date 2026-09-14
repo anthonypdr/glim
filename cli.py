@@ -21,6 +21,7 @@ from glim.display import Markdown, ComposerConsole, StreamingMarkdown, command_d
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.text import Text
+from rich.table import Table
 
 from glim.agent import Agent
 from glim.conversation import chat_history, estimate_tokens
@@ -293,109 +294,51 @@ class Glim:
     # -----------------------------------------------------
 
     def show_help(self):
-        help_text = """
-# Glim Help
+        self.console.print("\n[bold #89dceb]Glim help[/bold #89dceb]")
+        self.console.print("Chat, work on your project, or search the web.\n")
 
-## Chat
+        def section(title, rows):
+            self.console.print(Text(title, style="bold #cba6f7"))
+            if self.console.width < 60:
+                for command, description in rows:
+                    self.console.print(Text(command, style="bold #89dceb"))
+                    self.console.print(Text("  " + description))
+            else:
+                table = Table.grid(padding=(0, 2))
+                table.add_column(style="bold #89dceb", no_wrap=True)
+                table.add_column()
+                for command, description in rows:
+                    table.add_row(Text(command), Text(description))
+                self.console.print(table)
+            self.console.print()
 
-Type normally for lightweight chat.
-
-No filesystem, shell, or web tools are attached.
-
-Examples:
-
-`hi`
-
-`explain async/await`
-
-`what does this Python error mean?`
-
-## Agent mode
-
-Start your request with `@`.
-
-Agent mode temporarily gives the model access to project and web tools.
-
-Examples:
-
-`@ inspect this project`
-
-`@ read package.json and explain the dependencies`
-
-`@ fix the login bug`
-
-`@ run the tests and fix failures`
-
-`@ search the web for the latest Godot release notes`
-
-## Direct shell command
-
-Use:
-
-`@ run COMMAND`
-
-Example:
-
-`@ run python3 --version`
-
-Safe read-only commands may run immediately.
-
-Other commands require your approval.
-
-## Commands
-
-`/help`
-
-Show this help.
-
-`/model`
-
-Show or switch loaded LM Studio models.
-
-`/status`
-
-Show connection, model, directory, and context.
-
-`/tools`
-
-Show tools available in agent mode.
-
-`/clear`
-
-Clear normal chat history.
-
-`/exit`
-
-Quit Glim.
-
-## Notifications
-
-Glim sends a desktop notification only after an AI response
-or agent task has completely finished.
-
-Typing does not trigger notifications.
-
-## Message display
-
-Your submitted messages are shown in a subtle gray block so
-they are easy to distinguish from AI responses.
-
-## Modes
-
-**Normal chat**
-
-Your conversation goes directly to LM Studio without agent tools.
-
-**@ Agent mode**
-
-A small agent prompt and tool definitions are temporarily attached.
-
-When the task finishes, Glim returns to lightweight chat.
-"""
-
-        self.console.print(
-            Markdown(help_text)
-        )
+        section("Start here", [
+            ("Ask a question", "Normal chat; no tools enabled."),
+            ("@ inspect this project", "Use project tools for a task."),
+            ("@ search the web for …", "Look up information online."),
+            ("@ run python3 --version", "Run an exact shell command."),
+        ])
+        section("Commands", [
+            ("/model", "Choose a model; keep conversation history."),
+            ("/status", "View connection, model, and working directory."),
+            ("/tools", "List the tools available with @."),
+            ("/title NAME", "Rename this conversation."),
+            ("/clear", "Clear chat and agent history."),
+            ("/help", "Show this guide."),
+            ("/exit", "Quit Glim."),
+        ])
+        section("Command approval", [
+            ("1 or Y", "Allow this command once."),
+            ("2, N, or Esc", "Decline the command."),
+            ("↑ / ↓ then Enter", "Choose and confirm; Decline starts selected."),
+        ])
+        self.console.print("[bold #cba6f7]While Glim works[/bold #cba6f7]")
+        self.console.print("Keep typing to queue a follow-up. Use slash commands after work finishes.")
+        self.console.print("Approval shortcuts work when the input is empty.\n")
+        self.console.print("[bold #cba6f7]Below the input[/bold #cba6f7]")
+        self.console.print("Model · working path · conversation title; context usage on the right.")
+        self.console.print("[cyan]~[/cyan] means estimated usage. [cyan]—[/cyan] means the context limit is unavailable.")
+        self.console.print("\n[dim]Chat and @ share history in this session. Restarting Glim clears it.[/dim]\n")
 
     # -----------------------------------------------------
     # STATUS
