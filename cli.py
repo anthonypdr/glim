@@ -6,9 +6,10 @@ import time
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.filters import to_filter
+from prompt_toolkit.filters import to_filter, Condition
+from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.layout.containers import HSplit, Window
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window, ConditionalContainer, WindowAlign
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.output.defaults import create_output
@@ -22,7 +23,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from glim.agent import Agent
-from glim.conversation import chat_history
+from glim.conversation import chat_history, estimate_tokens
 from glim.lmstudio import LMStudio
 
 
@@ -39,6 +40,7 @@ class Glim:
         self.working_detail = ""
         self.pending = queue.Queue()
         self.approval = None
+        self.approval_choice = 1
         self.persistent_composer = False
 
         output = create_output()
@@ -57,6 +59,9 @@ class Glim:
             "disconnected": "#f38ba8",
             "working": "bold cyan",
             "approval": "bold ansiyellow",
+            "selected": "bold #1e1e2e bg:#89dceb",
+            "context": "#a6e3a1",
+            "context-high": "#f9e2af",
         })
 
         self.session = PromptSession(
@@ -66,7 +71,9 @@ class Glim:
             erase_when_done=True,
             reserve_space_for_menu=0,
             refresh_interval=0.15,
+            key_bindings=self.approval_bindings(),
         )
+        self.session.app.ttimeoutlen = 0.1
 
         # PromptSession owns a real Window for the input buffer. Styling that
         # window paints its full available width without applying a background
@@ -82,11 +89,19 @@ class Glim:
         self.session.app.layout.container = HSplit(
             [
                 Window(FormattedTextControl(self.working_status), height=1),
+                ConditionalContainer(
+                    Window(FormattedTextControl(self.approval_menu), height=3),
+                    filter=Condition(lambda: self.approval is not None),
+                ),
                 Window(height=1, style="class:input-bar"),
                 self.session.app.layout.container,
                 Window(height=1, style="class:input-bar"),
-                Window(FormattedTextControl(self.footer), wrap_lines=True,
-                       dont_extend_height=True),
+                VSplit([
+                    Window(FormattedTextControl(self.footer), wrap_lines=True,
+                           dont_extend_height=True),
+                    Window(FormattedTextControl(self.context_status), width=23,
+                           height=1, align=WindowAlign.RIGHT),
+                ]),
             ],
         )
 
@@ -104,7 +119,7 @@ class Glim:
         queued = self.pending.qsize()
         suffix = f" · {queued} queued" if queued else ""
         if self.approval:
-            return FormattedText([("class:approval", f"  Approval needed — paused: type y or n, then Enter{suffix}")])
+            return FormattedText([("class:approval", f"  Approval needed — choose below{suffix}")])
         if self.working or queued:
             frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
             frame = frames[int(time.monotonic() / 0.15) % len(frames)]
@@ -118,8 +133,53 @@ class Glim:
 
     def input_placeholder(self):
         if self.approval:
-            return FormattedText([("class:placeholder", "Type y to approve or n to decline, then Enter")])
+            return FormattedText([("class:placeholder", "1 / Y allow · 2 / N decline · ↑↓ then Enter")])
         return FormattedText([("class:placeholder", "Ask anything…  @ for project tools  /help for commands")])
+
+    def context_status(self):
+        limit = next((m.get("context_length") for m in self.models if m["id"] == self.model), None)
+        if not isinstance(limit, int) or limit <= 0:
+            return FormattedText([("class:metadata", "Context —  ")])
+        usage = self.lm.context_usage
+        if isinstance(usage, dict) and usage.get("model") == self.model:
+            tokens, estimated = usage["tokens"], usage["estimated"]
+        else:
+            tokens, estimated = estimate_tokens(self.messages), bool(self.messages)
+        percent = tokens * 100 / limit
+        style = "class:context-high" if percent >= 80 else "class:context"
+        return FormattedText([(style, f"Context {'~' if estimated else ''}{percent:.0f}% used  ")])
+
+    def approval_menu(self):
+        result = []
+        for index, label in enumerate(("1. Allow once  [Y]", "2. Decline     [N / Esc]")):
+            selected = index == self.approval_choice
+            result.append(("class:selected" if selected else "class:metadata",
+                           ("  › " if selected else "    ") + label + "\n"))
+        result.append(("class:metadata", "    ↑↓ select · Enter confirm"))
+        return FormattedText(result)
+
+    def approval_bindings(self):
+        bindings = KeyBindings()
+        choosing = Condition(lambda: self.approval is not None and not self.session.default_buffer.text)
+        for key, approved in (("1", True), ("y", True), ("Y", True), ("2", False), ("n", False), ("N", False)):
+            def choose(event, approved=approved):
+                self.answer_approval(approved)
+            bindings.add(key, filter=choosing)(choose)
+
+        @bindings.add("up", filter=choosing)
+        @bindings.add("down", filter=choosing)
+        def move(event):
+            self.approval_choice = 1 - self.approval_choice
+
+        @bindings.add("enter", filter=choosing)
+        def accept(event):
+            self.answer_approval(self.approval_choice == 0)
+
+        @bindings.add("escape", filter=Condition(lambda: self.approval is not None), eager=True)
+        def decline(event):
+            self.answer_approval(False)
+
+        return bindings
 
     def process_requests(self):
         while True:
@@ -457,8 +517,9 @@ When the task finishes, Glim returns to lightweight chat.
         if self.persistent_composer:
             event = threading.Event()
             request = {"event": event, "approved": False}
+            self.approval_choice = 1
             self.approval = request
-            self.console.print(Text("Allow this command? Type y or n below.", style="yellow"))
+            self.console.print(Text("Allow this command? Choose 1 / Y to allow once or 2 / N to decline.", style="yellow"))
             self.console.print(command_display(command))
             self.session.app.invalidate()
             event.wait()
@@ -476,7 +537,7 @@ When the task finishes, Glim returns to lightweight chat.
 
         try:
             answer = self.session.prompt(
-                "Allow this command? [y/N] "
+                "1 / Y: allow once · 2 / N: decline > "
             ).strip().lower()
 
         except (
@@ -487,6 +548,7 @@ When the task finishes, Glim returns to lightweight chat.
             return False
 
         approved = answer in (
+            "1",
             "y",
             "yes",
         )
@@ -660,6 +722,7 @@ When the task finishes, Glim returns to lightweight chat.
 
     def clear(self):
         self.messages.clear()
+        self.lm.context_usage = None
         self.conversation_name = "New conversation"
 
         os.system(
@@ -960,8 +1023,8 @@ When the task finishes, Glim returns to lightweight chat.
             if not text:
                 continue
 
-            if self.approval and text.lower() in ("y", "yes", "n", "no"):
-                self.answer_approval(text.lower() in ("y", "yes"))
+            if self.approval and text.lower() in ("1", "2", "y", "yes", "n", "no"):
+                self.answer_approval(text.lower() in ("1", "y", "yes"))
                 continue
 
             if text.startswith("/"):
@@ -991,7 +1054,7 @@ When the task finishes, Glim returns to lightweight chat.
                 self.conversation_name = title[:47] + ("…" if len(title) > 47 else "")
             self.pending.put(text)
             if self.approval:
-                self.console.print("[yellow]Message queued. The current command still needs y or n to continue.[/yellow]")
+                self.console.print("[yellow]Message queued. Choose 1 / Y or 2 / N for the current command.[/yellow]")
             self.session.app.invalidate()
 
     def answer_approval(self, approved):

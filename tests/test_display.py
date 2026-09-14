@@ -27,6 +27,56 @@ class TerminalOutput(DummyOutput):
 
 
 class PromptDisplayTests(unittest.IsolatedAsyncioTestCase):
+    async def test_numbered_approval_shortcuts_and_arrow_selection(self):
+        for keys, expected in (("1", True), ("2", False), ("y", True), ("n", False),
+                               ("\x1b[A\r", True), ("\r", False), ("\x1b", False)):
+            with create_pipe_input() as pipe, patch(
+                "glim.cli.create_output", return_value=TerminalOutput(24)
+            ), create_app_session(input=pipe):
+                glim = Glim()
+                glim.console = Console(file=io.StringIO())
+                glim.session.app.input = pipe
+                event = threading.Event()
+                request = {"event": event, "approved": None}
+                glim.approval = request
+                prompt = asyncio.create_task(glim.session.prompt_async("  > "))
+                try:
+                    await asyncio.sleep(0.03)
+                    pipe.send_text(keys)
+                    for _ in range(30):
+                        if event.is_set():
+                            break
+                        await asyncio.sleep(0.01)
+                    self.assertTrue(event.is_set(), repr(keys))
+                    self.assertEqual(request["approved"], expected)
+                    self.assertEqual(glim.session.default_buffer.text, "")
+                finally:
+                    if not prompt.done():
+                        glim.session.app.exit()
+                    await prompt
+
+    async def test_context_percentage_is_at_far_right(self):
+        with create_pipe_input() as pipe, patch(
+            "glim.cli.create_output", return_value=TerminalOutput(24)
+        ), create_app_session(input=pipe):
+            glim = Glim()
+            glim.model = "gemma"
+            glim.models = [{"id": "gemma", "context_length": 1000}]
+            glim.lm.context_usage = {"model": "gemma", "tokens": 250, "estimated": False}
+            glim.session.app.input = pipe
+            task = asyncio.create_task(glim.session.prompt_async("  > "))
+            try:
+                await asyncio.sleep(0.05)
+                screen = glim.session.app.renderer._last_screen
+                line = "".join(cell.char for _, cell in sorted(screen.data_buffer[4].items()))
+                self.assertTrue(line.endswith("Context 25% used  "), repr(line))
+                self.assertEqual(len(line), 80)
+                glim.models = []
+                self.assertIn("Context —", str(glim.context_status()))
+            finally:
+                glim.session.app.exit()
+                await task
+
     async def test_background_tracks_content_in_short_and_tall_terminals(self):
         for rows in (24, 100):
             with create_pipe_input() as pipe, patch(
@@ -81,8 +131,9 @@ class PromptDisplayTests(unittest.IsolatedAsyncioTestCase):
                     screen = glim.session.app.renderer._last_screen
                     status = "".join(cell.char for _, cell in sorted(screen.data_buffer[0].items()))
                     self.assertIn(expected, status)
+                    input_row = 5 if approval else 2
                     self.assertTrue(any("class:input-bar" in cell.style
-                                        for cell in screen.data_buffer[2].values()))
+                                        for cell in screen.data_buffer[input_row].values()))
                 pipe.send_text("\n")
                 await task
             finally:
@@ -127,6 +178,18 @@ class PromptDisplayTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentDisplayTests(unittest.TestCase):
+    def test_stream_keeps_paragraph_spacing_and_loose_list_numbering(self):
+        stream = io.StringIO()
+        renderer = StreamingMarkdown(Console(file=stream, width=60))
+        source = "First paragraph.\n\nSecond paragraph.\n\n1. First item\n\n2. Second item\n\nDone."
+        for character in source:
+            renderer.feed(character)
+        renderer.finish()
+        output = "\n".join(line.rstrip() for line in stream.getvalue().splitlines())
+        self.assertIn("First paragraph.\n\nSecond paragraph.", output)
+        self.assertIn("2 Second item", output)
+        self.assertEqual(output.count("Done."), 1)
+
     def test_worker_serializes_chat_and_agent_requests_after_failure(self):
         with patch("glim.cli.create_output", return_value=TerminalOutput(24)):
             glim = Glim()

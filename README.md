@@ -102,11 +102,20 @@ requests run in order. The footer shows the active model, working directory,
 conversation title, and working or queued status. Titles start from your first
 message and can be changed with `/title NAME`.
 
-When a shell command needs approval, its command is shown above the input.
-Enter `y` to approve or `n` to decline; other messages remain follow-up requests.
+When a shell command needs approval, its command and a numbered menu appear
+above the input. Press `1` or `Y` to allow once, or `2`, `N`, or `Esc` to decline.
+You can also select with the arrow keys and confirm with Enter. Decline is
+selected initially. Shortcuts apply when the input is empty; an existing draft
+stays editable, and submitted follow-up messages are queued.
 Slash commands are available after queued work finishes. Responses appear as
 formatted paragraphs and complete code blocks, with language labels and syntax
 highlighting.
+
+The right side of the footer shows the percentage of request context used.
+Glim uses LM Studio's loaded context window and reported token usage when
+available. `~` marks an estimate (including while streaming); `Context —` means
+the server did not expose the loaded context limit. This is per-request usage,
+not a cumulative count across requests. `/clear` resets the displayed usage.
 
 Normal chat and `@` requests share conversation history within the running
 session, including earlier tool calls and results. Switching models keeps that

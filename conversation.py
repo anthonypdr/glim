@@ -3,6 +3,14 @@
 import json
 
 
+def estimate_tokens(messages, tools=None):
+    """A labelled fallback estimate, not a substitute for the model tokenizer."""
+    if not messages and not tools:
+        return 0
+    text = json.dumps({"messages": messages, "tools": tools}, ensure_ascii=False)
+    return max(1, (len(text) + 3) // 4)
+
+
 def chat_history(messages):
     history = []
     for message in messages:

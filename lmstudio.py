@@ -1,6 +1,7 @@
 import json
 import os
 import requests
+from glim.conversation import estimate_tokens
 
 
 class LMStudio:
@@ -20,6 +21,20 @@ class LMStudio:
             "LM Studio",
         )
         self.has_loaded_state = False
+        self.context_usage = None
+
+    def _begin_usage(self, model, messages, tools):
+        self.context_usage = {"model": model, "tokens": estimate_tokens(messages, tools), "estimated": True}
+
+    def _record_usage(self, data):
+        usage = data.get("usage") or {}
+        tokens = usage.get("total_tokens")
+        if not isinstance(tokens, int):
+            prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
+            if isinstance(prompt, int) and isinstance(completion, int):
+                tokens = prompt + completion
+        if isinstance(tokens, int) and tokens >= 0 and self.context_usage:
+            self.context_usage = {**self.context_usage, "tokens": tokens, "estimated": False}
 
     @property
     def models_url(self):
@@ -81,6 +96,10 @@ class LMStudio:
                 item.get("loaded_instances")
                 or []
             )
+            # Use the loaded window, not the model's theoretical maximum.
+            lengths = {(instance.get("config") or {}).get("context_length")
+                       for instance in loaded_instances}
+            context_length = lengths.pop() if len(lengths) == 1 else None
 
             models.append(
                 {
@@ -92,6 +111,7 @@ class LMStudio:
                     "loaded": bool(
                         loaded_instances
                     ),
+                    "context_length": context_length,
                     "params": item.get(
                         "params_string"
                     ),
@@ -145,11 +165,16 @@ class LMStudio:
         cancel_event=None,
         on_response=None,
     ):
+        self._begin_usage(model, messages, tools)
+        prompt_estimate = self.context_usage["tokens"]
+        output_chars = 0
         payload = {
             "model": model,
             "messages": messages,
             "stream": True,
         }
+        if self.has_loaded_state:
+            payload["stream_options"] = {"include_usage": True}
 
         if tools:
             payload["tools"] = tools
@@ -190,7 +215,18 @@ class LMStudio:
                     break
 
                 try:
-                    yield json.loads(raw)
+                    chunk = json.loads(raw)
+                    for choice in chunk.get("choices") or []:
+                        delta = choice.get("delta") or {}
+                        output_chars += len(delta.get("content") or "")
+                        output_chars += len(delta.get("reasoning_content") or "")
+                    if self.context_usage["estimated"]:
+                        self.context_usage = {**self.context_usage, "tokens": prompt_estimate + (output_chars + 3) // 4}
+                    self._record_usage(chunk)
+                    # Usage-only SSE events have no choices; consumers render
+                    # content, while the footer reads the usage snapshot.
+                    if chunk.get("choices"):
+                        yield chunk
 
                 except json.JSONDecodeError:
                     continue
@@ -204,6 +240,7 @@ class LMStudio:
         tools=None,
         tool_choice=None,
     ):
+        self._begin_usage(model, messages, tools)
         payload = {
             "model": model,
             "messages": messages,
@@ -227,4 +264,9 @@ class LMStudio:
 
         response.raise_for_status()
 
-        return response.json()
+        data = response.json()
+        output = [choice.get("message") or {} for choice in data.get("choices") or []]
+        self.context_usage = {**self.context_usage,
+                              "tokens": self.context_usage["tokens"] + estimate_tokens(output)}
+        self._record_usage(data)
+        return data

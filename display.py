@@ -113,11 +113,20 @@ class StreamingMarkdown:
         self.pending = ""
         self.block = ""
         self.fence = None
+        self.separator = False
 
     def feed(self, text):
         self.pending += text
         while "\n" in self.pending:
             line, self.pending = self.pending.split("\n", 1)
+            if self.separator and line.strip() and not self.fence:
+                list_marker = r"^ {0,3}(?:[-+*]|\d+[.)])\s"
+                list_continues = re.match(list_marker, self.block) and (
+                    re.match(list_marker, line) or line.startswith(("  ", "\t"))
+                )
+                if not list_continues:
+                    self.flush_block()
+                self.separator = False
             self.block += line + "\n"
             marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
             if self.fence:
@@ -128,14 +137,17 @@ class StreamingMarkdown:
             elif marker:
                 self.fence = marker[1]
             elif not line.strip():
-                self.flush_block()
+                # Wait for the next line so loose lists remain a single
+                # Markdown block and retain numbering and nested indentation.
+                self.separator = True
 
     def flush_block(self):
         if self.block.strip():
             self.console.print(Markdown(self.block))
+            self.console.print()
         self.block = ""
 
     def finish(self):
-        self.block += self.pending
-        self.pending = ""
+        if self.pending:
+            self.feed("\n")
         self.flush_block()
