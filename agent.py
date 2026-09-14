@@ -1,6 +1,6 @@
 import json
 
-from rich.markdown import Markdown
+from glim.display import Markdown, diff_panel, command_display
 from rich.text import Text
 
 from glim.tools import (
@@ -39,6 +39,8 @@ Important rules:
 - Do not claim you inspected something unless you actually used a tool.
 - Read relevant files before modifying them.
 - Shell commands may require explicit approval from the user.
+- Development servers are long-running. Unless the user asks you to start one,
+  provide its launch command for a separate terminal instead of running it.
 - If a command is declined or blocked, do not bypass the restriction.
 - Keep tool usage focused and minimal.
 """.strip()
@@ -177,7 +179,26 @@ class Agent:
         self.console = console
         self.confirm_callback = confirm_callback
 
-    def run(self, task, max_steps=12):
+    def run(self, task, max_steps=12, history=None):
+        """Keep the complete turn while attaching instructions only in agent mode."""
+        conversation = history if history is not None else []
+        start = len(conversation) + 1
+        messages = [
+            {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+            *conversation,
+            {"role": "user", "content": task},
+        ]
+        try:
+            result = self._run(task, messages, max_steps)
+            messages.append({"role": "assistant", "content": result})
+            return result
+        except Exception as error:
+            messages.append({"role": "assistant", "content": f"Agent request failed: {error}"})
+            raise
+        finally:
+            conversation.extend(messages[start:])
+
+    def _run(self, task, messages, max_steps):
         # -------------------------------------------------
         # DIRECT COMMAND MODE
         #
@@ -200,17 +221,6 @@ class Agent:
         # -------------------------------------------------
         # NORMAL AGENT MODE
         # -------------------------------------------------
-
-        messages = [
-            {
-                "role": "system",
-                "content": AGENT_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": task,
-            },
-        ]
 
         for _ in range(max_steps):
             # Stop live rendering before printing durable output or asking
@@ -385,9 +395,11 @@ class Agent:
             }
 
         try:
-            result = function(
-                **arguments
-            )
+            if name == "run_command":
+                with self.console.status("Running command (up to 120 seconds)…"):
+                    result = function(**arguments)
+            else:
+                result = function(**arguments)
 
         except Exception as error:
             return {
@@ -419,9 +431,8 @@ class Agent:
                     "error": "User declined the command.",
                 }
 
-            return execute_command(
-                command
-            )
+            with self.console.status("Running approved command (up to 120 seconds)…"):
+                return execute_command(command)
 
         return result
 
@@ -449,10 +460,8 @@ class Agent:
             )
 
         elif name == "run_command":
-            self.console.print(
-                f"[dim]• Running "
-                f"{arguments.get('command', '')}[/dim]"
-            )
+            self.console.print("[bold cyan]• Command[/bold cyan]")
+            self.console.print(command_display(arguments.get('command', '')))
 
         elif name == "web_search":
             self.console.print(
@@ -516,15 +525,7 @@ class Agent:
 
             diff = result.get("diff", "")
             if diff:
-                rendered_diff = Text()
-                for line in diff.splitlines():
-                    style = (
-                        "green" if line.startswith("+") and not line.startswith("+++")
-                        else "red" if line.startswith("-") and not line.startswith("---")
-                        else "dim"
-                    )
-                    rendered_diff.append(line + "\n", style=style)
-                self.console.print(rendered_diff)
+                self.console.print(diff_panel(diff, path))
 
         elif name == "run_command":
             returncode = result.get(

@@ -1,22 +1,28 @@
 import os
 import subprocess
+import queue
+import threading
+import time
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.filters import to_filter
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.layout.containers import HSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.output.defaults import create_output
 from prompt_toolkit.styles import Style
 
 from rich.console import Console
 from rich.live import Live
-from rich.markdown import Markdown
+from glim.display import Markdown, ComposerConsole, StreamingMarkdown, command_display
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.text import Text
 
 from glim.agent import Agent
+from glim.conversation import chat_history
 from glim.lmstudio import LMStudio
 
 
@@ -28,6 +34,12 @@ class Glim:
         self.models = []
         self.model = None
         self.messages = []
+        self.conversation_name = "New conversation"
+        self.working = False
+        self.working_detail = ""
+        self.pending = queue.Queue()
+        self.approval = None
+        self.persistent_composer = False
 
         output = create_output()
 
@@ -38,6 +50,13 @@ class Glim:
             "input-bar": "bg:#303030 #ffffff",
             "prompt": "bold cyan bg:#303030",
             "placeholder": "ansibrightblack bg:#303030",
+            "metadata": "#888888",
+            "model": "bold #89dceb",
+            "path": "#a6e3a1",
+            "conversation": "#cba6f7",
+            "disconnected": "#f38ba8",
+            "working": "bold cyan",
+            "approval": "bold ansiyellow",
         })
 
         self.session = PromptSession(
@@ -46,6 +65,7 @@ class Glim:
             style=self.input_style,
             erase_when_done=True,
             reserve_space_for_menu=0,
+            refresh_interval=0.15,
         )
 
         # PromptSession owns a real Window for the input buffer. Styling that
@@ -61,11 +81,64 @@ class Glim:
         # to unused terminal rows. Wrapped input still grows with its content.
         self.session.app.layout.container = HSplit(
             [
+                Window(FormattedTextControl(self.working_status), height=1),
                 Window(height=1, style="class:input-bar"),
                 self.session.app.layout.container,
                 Window(height=1, style="class:input-bar"),
+                Window(FormattedTextControl(self.footer), wrap_lines=True,
+                       dont_extend_height=True),
             ],
         )
+
+    def footer(self):
+        return FormattedText([
+            ("class:metadata", "  "),
+            ("class:model" if self.model else "class:disconnected", self.model or "No model"),
+            ("class:metadata", " · "),
+            ("class:path", self.short_cwd()),
+            ("class:metadata", " · "),
+            ("class:conversation", self.conversation_name),
+        ])
+
+    def working_status(self):
+        queued = self.pending.qsize()
+        suffix = f" · {queued} queued" if queued else ""
+        if self.approval:
+            return FormattedText([("class:approval", f"  Approval needed — paused: type y or n, then Enter{suffix}")])
+        if self.working or queued:
+            frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+            frame = frames[int(time.monotonic() / 0.15) % len(frames)]
+            detail = f" · {self.working_detail}" if self.working_detail else ""
+            return FormattedText([("class:working", f"  {frame} Working…{detail}{suffix}")])
+        return FormattedText([("class:metadata", "  Ready")])
+
+    def set_working_detail(self, detail):
+        self.working_detail = detail
+        self.session.app.invalidate()
+
+    def input_placeholder(self):
+        if self.approval:
+            return FormattedText([("class:placeholder", "Type y to approve or n to decline, then Enter")])
+        return FormattedText([("class:placeholder", "Ask anything…  @ for project tools  /help for commands")])
+
+    def process_requests(self):
+        while True:
+            text = self.pending.get()
+            try:
+                if text is None:
+                    return
+                self.working = True
+                self.session.app.invalidate()
+                if text.startswith("@"):
+                    self.handle_agent_request(text)
+                else:
+                    self.normal_chat(text)
+            except Exception as error:
+                self.console.print(Text(f"Request failed: {error}", style="red"))
+            finally:
+                self.pending.task_done()
+                self.working = False
+                self.session.app.invalidate()
 
     # -----------------------------------------------------
     # GENERAL
@@ -145,33 +218,14 @@ class Glim:
     # -----------------------------------------------------
 
     def print_header(self):
+        content = Text("Glim", style="bold")
+        content.append("\n\nType ", style="dim not bold")
+        content.append("/model", style="bold #89dceb")
+        content.append(" to find a local model.\nType ", style="dim not bold")
+        content.append("/help", style="bold #89dceb")
+        content.append(" for commands.", style="dim not bold")
         self.console.print()
-
-        self.console.print(
-            "[bold]Glim[/bold]"
-        )
-
-        if self.model:
-            self.console.print(
-                f"[dim]{self.model} · {self.short_cwd()}[/dim]"
-            )
-
-        else:
-            self.console.print(
-                f"[red]{self.lm.server_name} disconnected or no model available[/red]"
-            )
-
-            self.console.print(
-                f"[dim]{self.short_cwd()}[/dim]"
-            )
-
-        self.console.print()
-
-        self.console.print(
-            "[dim]Type /model to find a local model. "
-            "Type /help for commands.[/dim]"
-        )
-
+        self.console.print(Panel.fit(content, border_style="#555555", padding=(1, 2)))
         self.console.print()
 
     # -----------------------------------------------------
@@ -400,15 +454,23 @@ When the task finishes, Glim returns to lightweight chat.
     # -----------------------------------------------------
 
     def confirm_command(self, command):
+        if self.persistent_composer:
+            event = threading.Event()
+            request = {"event": event, "approved": False}
+            self.approval = request
+            self.console.print(Text("Allow this command? Type y or n below.", style="yellow"))
+            self.console.print(command_display(command))
+            self.session.app.invalidate()
+            event.wait()
+            return request["approved"]
+
         self.console.print()
 
         self.console.print(
             "[bold yellow]This command requires approval:[/bold yellow]"
         )
 
-        self.console.print(
-            f"[cyan]{command}[/cyan]"
-        )
+        self.console.print(command_display(command))
 
         self.console.print()
 
@@ -582,7 +644,6 @@ When the task finishes, Glim returns to lightweight chat.
         selected = models[index]
 
         self.model = selected["id"]
-        self.messages.clear()
 
         self.console.print(
             f"\n[green]Switched to "
@@ -590,7 +651,7 @@ When the task finishes, Glim returns to lightweight chat.
         )
 
         self.console.print(
-            "[dim]Conversation context cleared.[/dim]\n"
+            "[dim]Conversation context retained.[/dim]\n"
         )
 
     # -----------------------------------------------------
@@ -599,6 +660,7 @@ When the task finishes, Glim returns to lightweight chat.
 
     def clear(self):
         self.messages.clear()
+        self.conversation_name = "New conversation"
 
         os.system(
             "clear"
@@ -634,7 +696,7 @@ When the task finishes, Glim returns to lightweight chat.
         try:
             generator = self.lm.stream_chat(
                 self.model,
-                self.messages,
+                chat_history(self.messages),
             )
 
             first_text = None
@@ -671,6 +733,21 @@ When the task finishes, Glim returns to lightweight chat.
                 return
 
             chunks.append(first_text)
+            if getattr(self, "persistent_composer", False):
+                rendered = StreamingMarkdown(self.console)
+                rendered.feed(first_text)
+                try:
+                    for chunk in generator:
+                        content = chunk.get("choices", [{}])[0].get("delta", {}).get("content")
+                        if content:
+                            chunks.append(content)
+                            rendered.feed(content)
+                finally:
+                    rendered.finish()
+                    self.console.print()
+                    self.messages.append({"role": "assistant", "content": "".join(chunks)})
+                self.notify_done()
+                return
             try:
                 # Reparse the accumulated Markdown as tokens arrive, so split
                 # fences, lists, and emphasis become formatted when complete.
@@ -757,7 +834,7 @@ When the task finishes, Glim returns to lightweight chat.
         )
 
         try:
-            result = agent.run(task)
+            result = agent.run(task, history=self.messages)
 
             self.console.print()
 
@@ -793,6 +870,10 @@ When the task finishes, Glim returns to lightweight chat.
         self,
         text,
     ):
+        if text.startswith("/title "):
+            self.conversation_name = " ".join(text[7:].split()) or "New conversation"
+            return True
+
         if text == "/help":
             self.show_help()
             return True
@@ -831,6 +912,20 @@ When the task finishes, Glim returns to lightweight chat.
     def run(self):
         self.detect_models()
         self.print_header()
+        self.persistent_composer = True
+        with patch_stdout(raw=True):
+            self.console = ComposerConsole(status_callback=self.set_working_detail)
+            worker = threading.Thread(target=self.process_requests, daemon=True)
+            worker.start()
+            try:
+                self.run_input_loop()
+            finally:
+                if self.approval:
+                    self.answer_approval(False)
+                self.pending.put(None)
+                worker.join(timeout=1)
+
+    def run_input_loop(self):
 
         while True:
             try:
@@ -839,17 +934,14 @@ When the task finishes, Glim returns to lightweight chat.
                         FormattedText([
                             ("class:prompt", "  > "),
                         ]),
-                        placeholder=FormattedText([
-                            (
-                                "class:placeholder",
-                                "Ask anything…  @ for project tools  /help for commands",
-                            ),
-                        ]),
+                        placeholder=self.input_placeholder,
                     )
                     .strip()
                 )
 
             except KeyboardInterrupt:
+                if self.approval:
+                    self.answer_approval(False)
                 self.console.print(
                     "\n[dim]Use /exit to quit.[/dim]\n"
                 )
@@ -857,13 +949,25 @@ When the task finishes, Glim returns to lightweight chat.
                 continue
 
             except EOFError:
+                if self.approval:
+                    self.answer_approval(False)
+                if self.working or self.pending.unfinished_tasks:
+                    self.console.print("[yellow]Wait for the active work before exiting.[/yellow]")
+                    continue
                 self.console.print()
                 break
 
             if not text:
                 continue
 
+            if self.approval and text.lower() in ("y", "yes", "n", "no"):
+                self.answer_approval(text.lower() in ("y", "yes"))
+                continue
+
             if text.startswith("/"):
+                if self.working or self.pending.unfinished_tasks:
+                    self.console.print("[yellow]Commands are available after the queued work finishes.[/yellow]")
+                    continue
                 if not self.handle_command(
                     text
                 ):
@@ -882,15 +986,21 @@ When the task finishes, Glim returns to lightweight chat.
                 text
             )
 
-            if text.startswith("@"):
-                self.handle_agent_request(
-                    text
-                )
-                continue
+            if self.conversation_name == "New conversation":
+                title = " ".join(text.lstrip("@").split())
+                self.conversation_name = title[:47] + ("…" if len(title) > 47 else "")
+            self.pending.put(text)
+            if self.approval:
+                self.console.print("[yellow]Message queued. The current command still needs y or n to continue.[/yellow]")
+            self.session.app.invalidate()
 
-            self.normal_chat(
-                text
-            )
+    def answer_approval(self, approved):
+        request = self.approval
+        self.approval = None
+        request["approved"] = approved
+        self.console.print(Text("Command approved — running…" if approved else "Command declined — continuing…", style="cyan"))
+        request["event"].set()
+        self.session.app.invalidate()
 
 
 def main():

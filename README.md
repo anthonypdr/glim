@@ -17,6 +17,8 @@ It provides a compact terminal experience without a large, always-on system prom
 - Lets the agent inspect and edit files inside the current project
 - Requires approval for shell commands other than a small read-only allowlist
 - Supports web search and readable web-page fetching in agent mode
+- Keeps the input available during responses and queues follow-up requests
+- Displays syntax-highlighted code blocks and a model, path, and conversation footer
 
 ## Install
 
@@ -91,8 +93,25 @@ Safe read-only commands run immediately. Commands that can alter the system or p
 | `/model` | Display running LM Studio models, or selectable models from another compatible local server |
 | `/status` | Show connection, model, directory, and context status |
 | `/tools` | Show the tools available through `@` agent mode |
-| `/clear` | Clear normal-chat history |
+| `/clear` | Clear the shared chat and agent history |
+| `/title NAME` | Rename the conversation displayed below the input |
 | `/exit` | Quit Glim |
+
+The input stays available while Glim works. Submit another message to queue it;
+requests run in order. The footer shows the active model, working directory,
+conversation title, and working or queued status. Titles start from your first
+message and can be changed with `/title NAME`.
+
+When a shell command needs approval, its command is shown above the input.
+Enter `y` to approve or `n` to decline; other messages remain follow-up requests.
+Slash commands are available after queued work finishes. Responses appear as
+formatted paragraphs and complete code blocks, with language labels and syntax
+highlighting.
+
+Normal chat and `@` requests share conversation history within the running
+session, including earlier tool calls and results. Switching models keeps that
+history; `/clear` resets it. Normal chat still runs without tool definitions or
+agent instructions. History is held in memory and is not restored after restart.
 
 ## How it stays lightweight
 
