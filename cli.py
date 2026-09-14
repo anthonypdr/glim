@@ -10,6 +10,7 @@ from prompt_toolkit.output.defaults import create_output
 from prompt_toolkit.styles import Style
 
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.padding import Padding
 from rich.panel import Panel
@@ -669,40 +670,28 @@ When the task finishes, Glim returns to lightweight chat.
                 )
                 return
 
-            self.console.print(Text(first_text), end="")
-
-            chunks.append(
-                first_text
-            )
-
-            for chunk in generator:
-                delta = (
-                    chunk
-                    .get(
-                        "choices",
-                        [{}],
-                    )[0]
-                    .get(
-                        "delta",
-                        {},
-                    )
-                )
-
-                content = delta.get(
-                    "content"
-                )
-
-                if content:
-                    # Text prevents brackets in model output from being
-                    # parsed as Rich markup while preserving streaming.
-                    self.console.print(Text(content), end="")
-
-                    chunks.append(
-                        content
-                    )
-
-            self.console.print()
-            self.console.print()
+            chunks.append(first_text)
+            try:
+                # Reparse the accumulated Markdown as tokens arrive, so split
+                # fences, lists, and emphasis become formatted when complete.
+                with Live(
+                    Markdown(first_text),
+                    console=self.console,
+                    refresh_per_second=8,
+                    transient=True,
+                    vertical_overflow="ellipsis",
+                ) as response:
+                    for chunk in generator:
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        content = delta.get("content")
+                        if content:
+                            chunks.append(content)
+                            response.update(Markdown("".join(chunks)))
+            finally:
+                # Commit the full answer to scrollback after removing the
+                # viewport-sized preview, including partial answers on failure.
+                self.console.print(Markdown("".join(chunks)))
+                self.console.print()
 
             assistant_text = "".join(
                 chunks

@@ -54,6 +54,48 @@ class PromptDisplayTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgentDisplayTests(unittest.TestCase):
+    def test_chat_renders_split_markdown_and_keeps_full_answer(self):
+        glim = Glim.__new__(Glim)
+        stream = io.StringIO()
+        glim.console = Console(file=stream, width=80, height=10)
+        glim.model = "test-model"
+        glim.messages = []
+        glim.notify_done = Mock()
+        glim.lm = Mock()
+        parts = ["**Bo", "ld**\n\n```python\n", "print('hello')\n```\n\n"]
+        parts.extend(f"Item {i}\n\n" for i in range(30))
+        glim.lm.stream_chat.return_value = iter(
+            {"choices": [{"delta": {"content": part}}]} for part in parts
+        )
+        glim.normal_chat("hello")
+        rendered = stream.getvalue()
+        self.assertIn("Bold", rendered)
+        self.assertNotIn("**Bold**", rendered)
+        self.assertNotIn("```", rendered)
+        self.assertIn("print('hello')", rendered)
+        lines = [line.rstrip() for line in rendered.splitlines()]
+        for i in range(30):
+            self.assertEqual(lines.count(f"Item {i}"), 1)
+        self.assertEqual(glim.messages[-1]["content"], "".join(parts))
+
+    def test_chat_keeps_formatted_partial_answer_on_stream_failure(self):
+        glim = Glim.__new__(Glim)
+        stream = io.StringIO()
+        glim.console = Console(file=stream)
+        glim.model = "test-model"
+        glim.messages = []
+        glim.lm = Mock()
+
+        def broken_stream(*args):
+            yield {"choices": [{"delta": {"content": "**Partial answer**"}}]}
+            raise RuntimeError("Connection lost")
+
+        glim.lm.stream_chat.side_effect = broken_stream
+        glim.normal_chat("hello")
+        self.assertIn("Partial answer", stream.getvalue())
+        self.assertNotIn("**Partial answer**", stream.getvalue())
+        self.assertIn("Connection lost", stream.getvalue())
+
     def test_commentary_and_diff_survive_tool_turn(self):
         stream = io.StringIO()
         console = Console(file=stream, width=80)
