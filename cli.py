@@ -524,7 +524,7 @@ class Glim:
             "",
             "[bold]Another local server[/bold]",
             "Point Glim at an OpenAI-compatible server:",
-            "[cyan]GLIM_SERVER_URL=http://HOST:PORT/v1 glim[/cyan]",
+            "[cyan]GLIM_SERVER_URL=http://HOST:PORT glim[/cyan]",
             "Optionally label it with [cyan]GLIM_SERVER_NAME[/cyan].",
         ]
 

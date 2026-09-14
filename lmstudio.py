@@ -16,6 +16,9 @@ class LMStudio:
             or "http://127.0.0.1:1234"
         )
         self.base_url = base_url.rstrip("/")
+        # Accept both server roots and the /v1 base URLs used by compatible SDKs.
+        if self.base_url.endswith("/v1"):
+            self.base_url = self.base_url[:-3]
         self.server_name = os.environ.get(
             "GLIM_SERVER_NAME",
             "LM Studio",

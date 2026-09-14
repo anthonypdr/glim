@@ -1,0 +1,4 @@
+include CHANGELOG.md
+recursive-include docs *.svg
+recursive-include scripts *.py
+recursive-include tests *.py
