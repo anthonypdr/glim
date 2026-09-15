@@ -1,7 +1,7 @@
 import json
 import os
 import requests
-from glim.conversation import estimate_tokens
+from glim.conversation import estimate_tokens, fit_context, short_title
 
 
 class LMStudio:
@@ -25,6 +25,9 @@ class LMStudio:
         )
         self.has_loaded_state = False
         self.context_usage = None
+        self.models = []
+        self.last_finish_reason = None
+        self.context_notice = None
 
     def _begin_usage(self, model, messages, tools):
         self.context_usage = {"model": model, "tokens": estimate_tokens(messages, tools), "estimated": True}
@@ -81,10 +84,12 @@ class LMStudio:
                 ) from compatible_error
 
             self.has_loaded_state = False
-            return self._compatible_models(data)
+            self.models = self._compatible_models(data)
+            return self.models
 
         self.has_loaded_state = True
-        return self._lmstudio_models(data)
+        self.models = self._lmstudio_models(data)
+        return self.models
 
     @staticmethod
     def _lmstudio_models(data):
@@ -121,6 +126,8 @@ class LMStudio:
                     "architecture": item.get(
                         "architecture"
                     ),
+                    "vision": (item.get("capabilities") or {}).get("vision"),
+                    "reasoning_options": ((item.get("capabilities") or {}).get("reasoning") or {}).get("allowed_options", []),
                 }
             )
 
@@ -159,6 +166,74 @@ class LMStudio:
             if model["loaded"]
         ]
 
+    def _prepare(self, model, messages, tools):
+        info = next((item for item in self.models if item['id'] == model), {})
+        if info.get('vision') is False and any(
+            isinstance(m.get('content'), list) and any(
+                part.get('type') == 'image_url' for part in m['content'])
+            for m in messages
+        ):
+            raise ValueError('The selected model does not support images. Choose a vision model with /model.')
+        messages, removed = fit_context(messages, info.get('context_length'), tools)
+        self.context_notice = (
+            f'Context: omitted {removed} older messages from this request to leave room for the answer.'
+            if removed else None
+        )
+        self.last_finish_reason = None
+        self._begin_usage(model, messages, tools)
+        return messages
+
+    @staticmethod
+    def _check_response(response):
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as error:
+            try:
+                detail = response.json().get('error', response.text)
+                if isinstance(detail, dict):
+                    detail = detail.get('message', str(detail))
+            except (ValueError, AttributeError):
+                detail = response.text
+            response.close()
+            raise RuntimeError(f'LM Studio rejected the request: {str(detail)[:1000]}') from error
+
+    def generate_title(self, model, prompt):
+        # A separate, bounded request: never add title instructions to chat history.
+        instructions = (
+            'Write a concise 3-6 word chat title summarizing the overall intent of the user prompt. '
+            'For multiple requests, choose an umbrella topic covering them all. '
+            'Return only the title. Do not answer the prompt.'
+        )
+        payload = {
+            'model': model, 'stream': False, 'max_tokens': 96,
+            'messages': [
+                {'role': 'system', 'content': instructions},
+                {'role': 'user', 'content': prompt[:6000]},
+            ],
+        }
+        url = self.chat_url
+        if self.has_loaded_state:
+            url = f'{self.base_url}/api/v1/chat'
+            payload = {'model': model, 'input': prompt[:6000],
+                       'system_prompt': instructions, 'max_output_tokens': 96,
+                       'stream': False, 'store': False}
+            info = next((item for item in self.models if item['id'] == model), {})
+            if 'off' in info.get('reasoning_options', []):
+                payload['reasoning'] = 'off'
+        response = requests.post(url, json=payload, timeout=(10, 30))
+        try:
+            self._check_response(response)
+            data = response.json()
+            if self.has_loaded_state:
+                title = ' '.join(item.get('content', '') for item in data.get('output', [])
+                                 if item.get('type') == 'message')
+            else:
+                title = data['choices'][0]['message'].get('content') or ''
+            return short_title(title)
+        finally:
+            response.close()
+
+
     def stream_chat(
         self,
         model,
@@ -168,7 +243,7 @@ class LMStudio:
         cancel_event=None,
         on_response=None,
     ):
-        self._begin_usage(model, messages, tools)
+        messages = self._prepare(model, messages, tools)
         prompt_estimate = self.context_usage["tokens"]
         output_chars = 0
         payload = {
@@ -178,6 +253,11 @@ class LMStudio:
         }
         if self.has_loaded_state:
             payload["stream_options"] = {"include_usage": True}
+
+        info = next((item for item in self.models if item['id'] == model), {})
+        limit = info.get('context_length')
+        if isinstance(limit, int) and limit > 0:
+            payload['max_tokens'] = max(1, min(4096, limit - self.context_usage['tokens'] - 256))
 
         if tools:
             payload["tools"] = tools
@@ -192,16 +272,17 @@ class LMStudio:
             },
             json=payload,
             stream=True,
-            timeout=300,
+            timeout=(10, 120),
         )
 
-        response.raise_for_status()
+        self._check_response(response)
 
         if on_response:
             on_response(response)
 
+        completed = False
         try:
-            for line in response.iter_lines():
+            for line in response.iter_lines(chunk_size=1):
                 if cancel_event and cancel_event.is_set():
                     break
 
@@ -210,16 +291,22 @@ class LMStudio:
 
                 decoded = line.decode("utf-8", errors="ignore")
 
-                if not decoded.startswith("data: "):
+                if not decoded.startswith("data:"):
                     continue
 
-                raw = decoded[6:]
+                raw = decoded[5:].strip()
                 if raw == "[DONE]":
+                    completed = True
                     break
 
                 try:
                     chunk = json.loads(raw)
+                    if chunk.get('error'):
+                        raise RuntimeError(f"LM Studio stream error: {chunk['error']}")
                     for choice in chunk.get("choices") or []:
+                        if choice.get('finish_reason'):
+                            self.last_finish_reason = choice['finish_reason']
+                            completed = True
                         delta = choice.get("delta") or {}
                         output_chars += len(delta.get("content") or "")
                         output_chars += len(delta.get("reasoning_content") or "")
@@ -231,8 +318,10 @@ class LMStudio:
                     if chunk.get("choices"):
                         yield chunk
 
-                except json.JSONDecodeError:
-                    continue
+                except json.JSONDecodeError as error:
+                    raise RuntimeError("LM Studio sent an invalid stream event. Please retry.") from error
+            if not completed and not (cancel_event and cancel_event.is_set()):
+                raise RuntimeError("The response stream disconnected before completion. Please retry.")
         finally:
             response.close()
 
@@ -243,12 +332,17 @@ class LMStudio:
         tools=None,
         tool_choice=None,
     ):
-        self._begin_usage(model, messages, tools)
+        messages = self._prepare(model, messages, tools)
         payload = {
             "model": model,
             "messages": messages,
             "stream": False,
         }
+
+        info = next((item for item in self.models if item['id'] == model), {})
+        limit = info.get('context_length')
+        if isinstance(limit, int) and limit > 0:
+            payload['max_tokens'] = max(1, min(4096, limit - self.context_usage['tokens'] - 256))
 
         if tools:
             payload["tools"] = tools
@@ -262,12 +356,18 @@ class LMStudio:
                 "Content-Type": "application/json",
             },
             json=payload,
-            timeout=300,
+            timeout=(10, 120),
         )
 
-        response.raise_for_status()
-
-        data = response.json()
+        try:
+            self._check_response(response)
+            data = response.json()
+        finally:
+            response.close()
+        if data.get('error'):
+            raise RuntimeError(f"LM Studio error: {data['error']}")
+        for choice in data.get('choices') or []:
+            self.last_finish_reason = choice.get('finish_reason')
         output = [choice.get("message") or {} for choice in data.get("choices") or []]
         self.context_usage = {**self.context_usage,
                               "tokens": self.context_usage["tokens"] + estimate_tokens(output)}

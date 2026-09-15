@@ -1,5 +1,7 @@
 import json
 
+from glim.conversation import referenced_images
+
 from glim.display import Markdown, diff_panel, command_display
 from rich.text import Text
 
@@ -181,12 +183,17 @@ class Agent:
 
     def run(self, task, max_steps=12, history=None):
         """Keep the complete turn while attaching instructions only in agent mode."""
+        content = task
+        if not task.strip().lower().startswith('run '):
+            task, attachments = referenced_images(task)
+            if attachments is not None:
+                content = attachments
         conversation = history if history is not None else []
         start = len(conversation) + 1
         messages = [
             {"role": "system", "content": AGENT_SYSTEM_PROMPT},
             *conversation,
-            {"role": "user", "content": task},
+            {"role": "user", "content": content},
         ]
         try:
             result = self._run(task, messages, max_steps)
@@ -236,6 +243,13 @@ class Agent:
                     tool_choice="auto",
                 )
 
+            if self.lmstudio.context_notice:
+                self.console.print(Text(str(self.lmstudio.context_notice), style='yellow'))
+            if self.lmstudio.last_finish_reason == 'length':
+                raise RuntimeError(
+                    'Generation reached the token/context limit. No incomplete tool call was executed. '
+                    'Shorten the task or increase the loaded context length.'
+                )
             message = (
                 response
                 .get("choices", [{}])[0]

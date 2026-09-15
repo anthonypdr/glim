@@ -1,4 +1,5 @@
 import os
+import asyncio
 import subprocess
 import queue
 import threading
@@ -16,15 +17,15 @@ from prompt_toolkit.output.defaults import create_output
 from prompt_toolkit.styles import Style
 
 from rich.console import Console
-from rich.live import Live
 from glim.display import Markdown, ComposerConsole, StreamingMarkdown, command_display
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.text import Text
 from rich.table import Table
 
+from glim.clipboard import ClipboardAttachments, read_clipboard
 from glim.agent import Agent
-from glim.conversation import chat_history, estimate_tokens
+from glim.conversation import chat_history, estimate_tokens, image_prompt, image_references, referenced_images
 from glim.lmstudio import LMStudio
 
 
@@ -37,12 +38,16 @@ class Glim:
         self.model = None
         self.messages = []
         self.conversation_name = "New conversation"
+        self.title_attempted = False
         self.working = False
         self.working_detail = ""
         self.pending = queue.Queue()
         self.approval = None
         self.approval_choice = 1
         self.persistent_composer = False
+        self.clipboard_attachments = ClipboardAttachments()
+        self.clipboard_busy = False
+        self.clipboard_status = ""
 
         output = create_output()
 
@@ -121,6 +126,9 @@ class Glim:
         suffix = f" · {queued} queued" if queued else ""
         if self.approval:
             return FormattedText([("class:approval", f"  Approval needed — choose below{suffix}")])
+        if self.clipboard_busy or self.clipboard_status:
+            return FormattedText([("class:metadata", "  " + (
+                "Reading clipboard…" if self.clipboard_busy else self.clipboard_status))])
         if self.working or queued:
             frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
             frame = frames[int(time.monotonic() / 0.15) % len(frames)]
@@ -135,7 +143,7 @@ class Glim:
     def input_placeholder(self):
         if self.approval:
             return FormattedText([("class:placeholder", "1 / Y allow · 2 / N decline · ↑↓ then Enter")])
-        return FormattedText([("class:placeholder", "Ask anything…  @ for project tools  /help for commands")])
+        return FormattedText([("class:placeholder", "Ask anything…  Ctrl+V / Alt+V paste  @ for tools  /help")])
 
     def context_status(self):
         limit = next((m.get("context_length") for m in self.models if m["id"] == self.model), None)
@@ -180,25 +188,78 @@ class Glim:
         def decline(event):
             self.answer_approval(False)
 
+        @bindings.add('c-v', filter=Condition(lambda: self.approval is None))
+        @bindings.add('escape', 'v', filter=Condition(lambda: self.approval is None))
+        async def paste(event):
+            await self.paste_clipboard(event.current_buffer)
+
+        @bindings.add('enter', filter=Condition(lambda: self.clipboard_busy), eager=True)
+        def wait_for_clipboard(event):
+            # Keep an async paste attached to the draft that requested it.
+            self.clipboard_status = 'Wait for clipboard paste to finish.'
+
         return bindings
+
+    async def paste_clipboard(self, buffer):
+        if self.clipboard_busy:
+            return
+        self.clipboard_busy = True
+        self.clipboard_status = ''
+        self.session.app.invalidate()
+        try:
+            kind, value = await asyncio.to_thread(read_clipboard)
+            if kind == 'image':
+                marker = self.clipboard_attachments.add(value)
+                buffer.insert_text(' ' + marker + ' ')
+                self.clipboard_status = f'{marker} attached · add a question and press Enter · delete the marker to remove'
+            else:
+                # Match bracketed text paste: insert, never submit pasted newlines.
+                buffer.insert_text(value.replace('\r\n', '\n').replace('\r', '\n'))
+        except (OSError, ValueError, KeyError) as error:
+            self.clipboard_status = str(error)
+        finally:
+            self.clipboard_busy = False
+            self.session.app.invalidate()
 
     def process_requests(self):
         while True:
             text = self.pending.get()
             try:
                 if text is None:
+                    attachments = getattr(self, 'clipboard_attachments', None)
+                    if attachments is not None:
+                        attachments.close()
                     return
                 self.working = True
                 self.session.app.invalidate()
-                if text.startswith("@"):
+                attachments = getattr(self, 'clipboard_attachments', None)
+                if attachments is not None:
+                    text = attachments.resolve(text)
+                references = image_references(text)
+                starts_with_image = bool(references and references[0][0].start() == 0)
+                if text.startswith("@") and not starts_with_image:
                     self.handle_agent_request(text)
                 else:
                     self.normal_chat(text)
+                if not self.title_attempted and self.messages:
+                    self.title_attempted = True
+                    first = self.messages[0].get('content', '')
+                    if isinstance(first, list):
+                        first = ' '.join(p.get('text', '') for p in first if p.get('type') == 'text')
+                    self.set_working_detail('Naming conversation')
+                    try:
+                        title = self.lm.generate_title(self.model, first)
+                        if self.conversation_name == 'New conversation':
+                            self.conversation_name = title
+                    except Exception:
+                        # Naming failure must never fail or replay a chat request.
+                        pass
             except Exception as error:
                 self.console.print(Text(f"Request failed: {error}", style="red"))
             finally:
                 self.pending.task_done()
                 self.working = False
+                self.working_detail = ""
                 self.session.app.invalidate()
 
     # -----------------------------------------------------
@@ -323,6 +384,7 @@ class Glim:
             ("/status", "View connection, model, and working directory."),
             ("/tools", "List the tools available with @."),
             ("/title NAME", "Rename this conversation."),
+            ('/image "PATH" QUESTION', "Send a PNG, JPEG, or WebP image to a vision model."),
             ("/clear", "Clear chat and agent history."),
             ("/help", "Show this guide."),
             ("/exit", "Quit Glim."),
@@ -338,6 +400,8 @@ class Glim:
         self.console.print("[bold #cba6f7]Below the input[/bold #cba6f7]")
         self.console.print("Model · working path · conversation title; context usage on the right.")
         self.console.print("[cyan]~[/cyan] means estimated usage. [cyan]—[/cyan] means the context limit is unavailable.")
+        self.console.print('[dim]Ctrl+V or Alt+V pastes a clipboard image or text. Delete an attachment marker to remove it.[/dim]')
+        self.console.print('\n[dim]Attach images with @"/path/to/image.png" followed by your question.[/dim]')
         self.console.print("\n[dim]Chat and @ share history in this session. Restarting Glim clears it.[/dim]\n")
 
     # -----------------------------------------------------
@@ -667,6 +731,7 @@ class Glim:
         self.messages.clear()
         self.lm.context_usage = None
         self.conversation_name = "New conversation"
+        self.title_attempted = False
 
         os.system(
             "clear"
@@ -690,117 +755,71 @@ class Glim:
             )
             return
 
-        self.messages.append(
-            {
-                "role": "user",
-                "content": text,
-            }
-        )
-
-        chunks = []
-
         try:
-            generator = self.lm.stream_chat(
-                self.model,
-                chat_history(self.messages),
-            )
-
-            first_text = None
-
-            with self.console.status(
-                "[dim]Thinking...[/dim]",
-                spinner="dots",
-            ):
-                for chunk in generator:
-                    delta = (
-                        chunk
-                        .get(
-                            "choices",
-                            [{}],
-                        )[0]
-                        .get(
-                            "delta",
-                            {},
-                        )
-                    )
-
-                    content = delta.get(
-                        "content"
-                    )
-
-                    if content:
-                        first_text = content
-                        break
-
-            if first_text is None:
-                self.console.print(
-                    "[yellow](No response)[/yellow]\n"
-                )
-                return
-
-            chunks.append(first_text)
-            if getattr(self, "persistent_composer", False):
-                rendered = StreamingMarkdown(self.console)
-                rendered.feed(first_text)
-                try:
-                    for chunk in generator:
-                        content = chunk.get("choices", [{}])[0].get("delta", {}).get("content")
-                        if content:
-                            chunks.append(content)
-                            rendered.feed(content)
-                finally:
-                    rendered.finish()
-                    self.console.print()
-                    self.messages.append({"role": "assistant", "content": "".join(chunks)})
-                self.notify_done()
-                return
-            try:
-                # Reparse the accumulated Markdown as tokens arrive, so split
-                # fences, lists, and emphasis become formatted when complete.
-                with Live(
-                    Markdown(first_text),
-                    console=self.console,
-                    refresh_per_second=8,
-                    transient=True,
-                    vertical_overflow="ellipsis",
-                ) as response:
-                    for chunk in generator:
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        content = delta.get("content")
-                        if content:
-                            chunks.append(content)
-                            response.update(Markdown("".join(chunks)))
-            finally:
-                # Commit the full answer to scrollback after removing the
-                # viewport-sized preview, including partial answers on failure.
-                self.console.print(Markdown("".join(chunks)))
-                self.console.print()
-
-            assistant_text = "".join(
-                chunks
-            )
-
-            self.messages.append(
-                {
-                    "role": "assistant",
-                    "content": assistant_text,
-                }
-            )
-
-            self.notify_done(
-                "Glim",
-                "Response complete",
-            )
-
+            if text.startswith('/image '):
+                _, content = image_prompt(text)
+            else:
+                _, attachments = referenced_images(text)
+                content = attachments if attachments is not None else text
+        except (OSError, ValueError) as error:
+            self.console.print(Text(str(error), style='red'))
+            return
+        user_message = {"role": "user", "content": content}
+        self.messages.append(user_message)
+        chunks = []
+        generator = None
+        rendered = None
+        notice_shown = False
+        try:
+            generator = self.lm.stream_chat(self.model, chat_history(self.messages))
+            self.set_chat_detail('Waiting for model')
+            rendered = StreamingMarkdown(self.console)
+            for chunk in generator:
+                notice = self.lm.context_notice
+                if isinstance(notice, str) and notice and not notice_shown:
+                    self.console.print(Text(notice, style='yellow'))
+                    notice_shown = True
+                delta = chunk.get('choices', [{}])[0].get('delta') or {}
+                if delta.get('reasoning_content') or delta.get('reasoning'):
+                    self.set_chat_detail('Model is reasoning')
+                answer = delta.get('content')
+                if answer:
+                    self.set_chat_detail('Receiving answer')
+                    chunks.append(answer)
+                    if rendered:
+                        rendered.feed(answer)
+            reason = self.lm.last_finish_reason
+            if reason == 'length':
+                self.console.print(Text(
+                    'Generation reached the token/context limit. The reply may be incomplete. '
+                    'Ask to continue, or increase the loaded context length.', style='yellow'))
+            elif not chunks:
+                self.console.print(Text(
+                    'The model finished without an answer. It may have used its budget reasoning; '
+                    'try a shorter request or disable thinking in LM Studio.', style='yellow'))
+            if chunks:
+                self.notify_done('Glim', 'Response complete' if reason != 'length' else 'Response reached limit')
         except Exception as error:
+            self.console.print(Text(f'Request failed: {error}', style='red'))
+        finally:
+            if generator is not None:
+                generator.close()
+            if rendered:
+                rendered.finish()
+            elif chunks:
+                self.console.print(Markdown(''.join(chunks)))
             self.console.print()
+            if chunks:
+                self.messages.append({'role': 'assistant', 'content': ''.join(chunks)})
+            else:
+                # Failed/empty requests must not grow history and poison follow-ups.
+                if self.messages and self.messages[-1] is user_message:
+                    self.messages.pop()
+            self.set_chat_detail('')
 
-            self.console.print(
-                f"[red]Request failed:[/red] "
-                f"{error}"
-            )
-
-            self.console.print()
+    def set_chat_detail(self, detail):
+        if getattr(self, 'session', None) is not None:
+            self.set_working_detail(detail)
 
     # -----------------------------------------------------
     # AGENT MODE
@@ -876,7 +895,16 @@ class Glim:
         self,
         text,
     ):
+        if text == '/image' or text.startswith('/image '):
+            if text == '/image':
+                self.console.print(Text('Usage: /image "/path/to/image.png" What is in this image?', style='yellow'))
+            else:
+                self.print_user_message(text)
+                self.pending.put(text)
+            return True
+
         if text.startswith("/title "):
+            self.title_attempted = True
             self.conversation_name = " ".join(text[7:].split()) or "New conversation"
             return True
 
@@ -930,6 +958,8 @@ class Glim:
                     self.answer_approval(False)
                 self.pending.put(None)
                 worker.join(timeout=1)
+                if not worker.is_alive():
+                    self.clipboard_attachments.close()
 
     def run_input_loop(self):
 
@@ -992,9 +1022,7 @@ class Glim:
                 text
             )
 
-            if self.conversation_name == "New conversation":
-                title = " ".join(text.lstrip("@").split())
-                self.conversation_name = title[:47] + ("…" if len(title) > 47 else "")
+            self.clipboard_status = ''
             self.pending.put(text)
             if self.approval:
                 self.console.print("[yellow]Message queued. Choose 1 / Y or 2 / N for the current command.[/yellow]")

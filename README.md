@@ -258,3 +258,77 @@ review from the community are welcome.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+
+## Images, titles, and long conversations
+
+Attach a local image with `@` (quote paths containing spaces):
+
+```text
+@"/home/you/Pictures/screenshot.png" What is wrong with this screen?
+Explain this chart @./chart.png
+@ fix the layout using @./reference.png
+```
+
+A leading image reference opens an image chat. `@ fix ...` still uses agent tools
+and can include image references. `/image "PATH" QUESTION` also remains available.
+The `@` reference sends the actual image to the model, not just its filename.
+
+PNG, JPEG, and WebP files up to 20 MB are accepted. Select a vision model with
+`/model`. Images remain available to follow-up questions while their turn fits
+in the request context.
+
+### Paste a screenshot
+
+1. Copy an image using Print Screen, Snipping Tool, or your screenshot app.
+2. In Glim, press **Ctrl+V** (or **Alt+V**, also available as Esc then V).
+3. An `@clipboard-1.png` attachment marker appears. Type your question and press Enter.
+
+You do not need to save the screenshot or find a path. Pasted images also work
+with agent requests, for example `@ fix this layout` followed by the pasted marker.
+Delete the marker from the draft to omit that image. Text clipboard contents are
+inserted as text and do not automatically submit the draft.
+
+Some terminals intercept Ctrl+V, Ctrl+Shift+V, or right-click Paste and only send
+text to terminal apps. Use **Alt+V** if normal terminal paste does nothing for an
+image. Glim reads the desktop clipboard only when its paste shortcut is pressed.
+
+Clipboard backends:
+
+- Linux Wayland: `wl-paste` from `wl-clipboard`.
+- Linux X11: `xclip`.
+- Windows / WSL: Windows PowerShell and the Windows Forms clipboard API.
+- macOS: the built-in `osascript` clipboard interface.
+
+Linux needs access to the local desktop session. SSH sessions without desktop
+clipboard access can still attach image files with `@`. No additional Python
+packages are needed. Images are kept in a private temporary directory for the
+session, including queued requests, and removed when the session finishes.
+The existing 20 MB image limit and model vision checks apply.
+
+After the first successful turn, Glim requests a short title summarizing the
+first prompt's overall intent. This separate request does not enter conversation
+history. LM Studio reasoning is disabled for naming when the model supports it.
+Use `/title NAME` to override the title. A naming error leaves the default title
+and does not interrupt the conversation.
+
+When LM Studio reports a loaded context length, Glim reserves half that window
+for generation and estimation error, removing whole older turns from the outgoing
+request as needed. A notice identifies omitted messages; full session history
+is retained locally. The current turn and its tool-call/result pairs are preserved.
+An oversized current turn produces an actionable error instead of resending an
+invalid request. Estimates are approximate, including a fixed allowance for images.
+The output budget is capped at 4,096 tokens or the estimated remaining space.
+Compatible servers without context metadata cannot use automatic context trimming.
+
+Interrupted streams and server errors are reported explicitly. Partial answers
+are retained; requests with no answer are removed from history so subsequent
+questions can recover. The status line distinguishes waiting, reasoning, and
+receiving an answer. A token-limit finish is shown as an incomplete reply.
+Requests use a 10-second connection timeout and a 120-second read timeout;
+streamed responses can run longer while data continues arriving.
+
+For long coding sessions, a larger **loaded context length** in LM Studio allows
+more history and larger tool results. This uses more memory; the model's advertised
+maximum is not the window it is currently loaded with. Refresh `/model` after
+changing the loaded model or its context settings. `/clear` starts fresh.
